@@ -199,7 +199,9 @@
             </address>
             <ul class="contact-checks"><li><span aria-hidden="true">✓</span>Beschrijf uw werkzaamheden</li><li><span aria-hidden="true">✓</span>Geef aan om welke vloer het gaat</li><li><span aria-hidden="true">✓</span>Bespreek de vervolgstappen</li></ul>
           </div>
-          <form class="contact-form" id="quote-form" action="https://formspree.io/f/mljgabdv" method="post" aria-describedby="form-instructions">
+          <div class="contact-form-wrap">
+          <form class="contact-form" id="quote-form" method="dialog" data-submissions-enabled="false" data-formspree-endpoint="https://formspree.io/f/mljgabdv" aria-describedby="form-instructions demo-disclaimer">
+            <p class="demo-disclaimer" id="demo-disclaimer">Studentenproject: dit formulier is een demonstratie, geen actief kanaal voor zakelijke aanvragen. Er worden geen gegevens verzonden.</p>
             <p class="form-instructions" id="form-instructions">Naam, e-mailadres en bericht zijn verplicht.</p>
             <input type="text" name="_gotcha" tabindex="-1" autocomplete="off" hidden>
             <div class="form-fields">
@@ -209,9 +211,21 @@
               <label>Onderwerp<select name="onderwerp"><option>Vloer verwijderen</option><option>Lijmresten verwijderen</option><option>Sloopwerk</option><option>Anders</option></select></label>
               <label class="form-message">Bericht<textarea name="message" rows="3" placeholder="Vertel iets over de ruimte en de werkzaamheden." required></textarea></label>
             </div>
-            <button class="button button-orange form-button" type="submit">Offerte aanvragen</button>
+            <button class="button button-orange form-button" type="submit">Formulier testen</button>
             <p class="form-note" id="form-note" role="status" aria-live="polite" aria-atomic="true" tabindex="-1"></p>
           </form>
+          <p class="form-privacy"><a href="#privacy">Privacyinformatie over dit studentenproject</a></p>
+          </div>
+        </div>
+      </section>
+
+      <section class="privacy section-light" id="privacy" aria-labelledby="privacy-title" tabindex="-1">
+        <div class="wrap">
+          <h2 id="privacy-title">Voorlopige privacyinformatie</h2>
+          <p>Deze website is een educatief demonstratieproject over V/D Linden Sloop, de eenmanszaak van Antonio. De website is momenteel geen actief kanaal voor zakelijke aanvragen.</p>
+          <p>Het contactformulier bevat velden voor naam, e-mailadres, een optioneel telefoonnummer, onderwerp en bericht. In deze demo blijven ingevulde gegevens op deze pagina en worden ze niet verzonden. Formspree is de externe dienst voor de bewaarde verzendintegratie; deze is hier uitgeschakeld.</p>
+          <p>In de huidige websitecode zijn geen analytics of advertentietrackers opgenomen. Vragen over persoonsgegevens kunt u sturen naar <a href="mailto:info@vdlindensloop.nl">info@vdlindensloop.nl</a>.</p>
+          <p>Deze informatie is voorlopig. Voor een eventuele commerci&euml;le lancering moeten de privacyinformatie en de gegevensverwerking opnieuw worden beoordeeld en aangevuld.</p>
         </div>
       </section>
     </main>
@@ -231,7 +245,7 @@
           <a href="https://vimeo.com/914183106?share=copy#t=0">Video op Vimeo</a>
         </div>
       </div>
-      <div class="footer-bottom wrap"><p>© V/D Linden Sloop. Alle rechten voorbehouden.</p></div>
+      <div class="footer-bottom wrap"><p>© V/D Linden Sloop. Alle rechten voorbehouden.</p><a href="#privacy">Privacyinformatie</a></div>
     </footer>
     <script>
       (() => {
@@ -249,6 +263,12 @@
           event.preventDefault();
           if (submitting || !form.reportValidity()) return;
 
+          if (form.dataset.submissionsEnabled !== "true") {
+            status.textContent = "Demonstratie: er zijn geen gegevens verzonden.";
+            status.focus();
+            return;
+          }
+
           submitting = true;
           button.disabled = true;
           button.setAttribute("aria-busy", "true");
@@ -258,7 +278,7 @@
           const timeout = setTimeout(() => controller.abort(), 20000);
 
           try {
-            const response = await fetch(form.action, {
+            const response = await fetch(form.dataset.formspreeEndpoint, {
               method: "POST",
               headers: { Accept: "application/json" },
               body: new FormData(form),

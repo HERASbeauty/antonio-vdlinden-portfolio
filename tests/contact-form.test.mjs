@@ -14,7 +14,7 @@ const endpoint = 'https://formspree.io/f/mljgabdv';
 const html = await readFile(join(root, 'index.html'), 'utf8');
 const handler = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].at(-1)[1];
 
-function setup(response, valid = true) {
+function setup(response, valid = true, submissionsEnabled = 'true') {
   const events = {};
   const requests = [];
   const attributes = new Map();
@@ -22,7 +22,7 @@ function setup(response, valid = true) {
   const button = { textContent: 'Offerte aanvragen', disabled: false, setAttribute: (name, value) => attributes.set(name, value), removeAttribute: name => attributes.delete(name) };
   const status = { textContent: '', focus() { this.focused = true; } };
   const form = {
-    action: endpoint,
+    dataset: { submissionsEnabled, formspreeEndpoint: endpoint },
     querySelector: () => button,
     addEventListener: (name, callback) => { events[name] = callback; },
     reportValidity: () => valid,
@@ -46,6 +46,41 @@ function setup(response, valid = true) {
   });
   return { events, requests, attributes, fields, button, status, form, submit: () => events.submit({ preventDefault() {} }), expire: () => timeoutCallback(), cleared: () => timeoutCleared };
 }
+
+test('demo and missing activation flag prevent Fetch and retain entered data', async () => {
+  for (const enabled of ['false', undefined]) {
+    const state = setup(() => assert.fail('Demo must not call Fetch'));
+    state.form.dataset.submissionsEnabled = enabled;
+    await state.submit();
+    await state.submit();
+    assert.equal(state.requests.length, 0);
+    assert.match(state.status.textContent, /geen gegevens verzonden/);
+    assert.equal(state.fields.name, 'Test Aanvraag');
+    assert.equal(state.form.resetCalled, undefined);
+    assert.equal(state.button.disabled, false);
+    assert.equal(state.status.focused, true);
+  }
+});
+
+test('published demo uses non-network native submission and an inactive endpoint', () => {
+  const formTag = html.match(/<form\b[^>]*id="quote-form"[^>]*>/)[0];
+  assert.match(formTag, /method="dialog"/);
+  assert.match(formTag, /data-submissions-enabled="false"/);
+  assert.match(formTag, /data-formspree-endpoint="https:\/\/formspree.io\/f\/mljgabdv"/);
+  assert.doesNotMatch(formTag, /\saction=/);
+});
+
+test('privacy links target the Dutch notice and demo disclaimer is associated with the form', () => {
+  assert.equal([...html.matchAll(/href="#privacy"/g)].length, 2);
+  assert.match(html, /<section[^>]*id="privacy"[^>]*tabindex="-1"/);
+  assert.match(html, /id="privacy-title">Voorlopige privacyinformatie/);
+  assert.match(html, /aria-describedby="form-instructions demo-disclaimer"/);
+  assert.match(html, /id="demo-disclaimer"/);
+  assert.match(html, /educatief demonstratieproject/);
+  assert.match(html, /Formspree is de externe dienst/);
+  assert.match(html, /geen analytics of advertentietrackers/);
+  assert.match(html, /opnieuw worden beoordeeld en aangevuld/);
+});
 
 for (const code of [200, 201, 400, 422, 429, 500, 503]) {
   test(`mocked HTTP ${code}: POST, payload, acceptance, data retention and accessible status focus`, async () => {
@@ -132,9 +167,12 @@ test('contact form, accessibility and gallery browser regressions (mocked delive
   const server = createServer(async (request, response) => {
     try {
       const pathname = decodeURIComponent(new URL(request.url, 'http://localhost').pathname);
-      const filename = resolve(root, pathname === '/' ? 'index.html' : `.${pathname}`);
+      const integrationFixture = pathname === '/integration-test';
+      const filename = resolve(root, pathname === '/' || integrationFixture ? 'index.html' : `.${pathname}`);
       if (!filename.startsWith(`${root}/`)) throw new Error('Invalid path');
-      const content = await readFile(filename);
+      const content = integrationFixture
+        ? (await readFile(filename, 'utf8')).replace('data-submissions-enabled="false"', 'data-submissions-enabled="true"')
+        : await readFile(filename);
       const types = { '.html': 'text/html; charset=utf-8', '.css': 'text/css', '.webp': 'image/webp', '.jpeg': 'image/jpeg', '.jpg': 'image/jpeg', '.png': 'image/png' };
       response.writeHead(200, { 'Content-Type': types[extname(filename)] || 'application/octet-stream' });
       response.end(content);
@@ -256,6 +294,61 @@ test('contact form, accessibility and gallery browser regressions (mocked delive
       await send('Input.dispatchKeyEvent', { type: 'keyDown', key: value, code: value, windowsVirtualKeyCode: value === 'Tab' ? 9 : value === 'Enter' ? 13 : undefined });
       await send('Input.dispatchKeyEvent', { type: 'keyUp', key: value, code: value });
     };
+
+    const loaded = () => evaluate(`new Promise(resolve => {
+      if (document.readyState === 'complete') resolve();
+      else window.addEventListener('load', resolve, { once: true });
+    })`);
+    const privacyLinks = await evaluate(`Array.from(document.querySelectorAll('a[href="#privacy"]'), anchor => anchor.textContent)`);
+    assert.equal(privacyLinks.length, 2);
+    for (const index of [0, 1]) {
+      await evaluate(`document.querySelectorAll('a[href="#privacy"]')[${index}].click()`);
+      assert.equal(await evaluate('location.hash'), '#privacy');
+      assert.equal(await evaluate('document.activeElement.id'), 'privacy');
+    }
+    await fill();
+    await submit();
+    await submit();
+    await evaluate(`document.querySelector('#quote-form button').click()`);
+    await evaluate(`document.querySelector('[name="email"]').focus()`);
+    await key('Enter');
+    assert.match((await settled()).text, /geen gegevens verzonden/);
+    assert.equal(requests.length, 0);
+    assert.equal(await evaluate(`document.querySelector('[name="name"]').value`), 'Test Aanvraag');
+    for (const width of [320, 390, 768, 1024, 1440]) {
+      await send('Emulation.setDeviceMetricsOverride', { width, height: 900, deviceScaleFactor: 1, mobile: false });
+      await evaluate(`new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))`);
+      assert.equal(await evaluate(`document.documentElement.scrollWidth <= innerWidth`), true, `Demo overflow at ${width}`);
+      assert.equal(await evaluate(`Array.from(document.querySelectorAll('.demo-disclaimer, .form-privacy, .privacy h2, .privacy p, '.concat('.footer-bottom > a')), element => {
+        const box = element.getBoundingClientRect();
+        return box.left >= 0 && box.right <= innerWidth + 1 && element.scrollWidth <= element.clientWidth + 1;
+      }).every(Boolean)`), true, `Privacy overflow at ${width}`);
+      await evaluate(`document.getElementById('quote-form').scrollIntoView({ block: 'center' })`);
+      const { data } = await send('Page.captureScreenshot', { format: 'png' });
+      await writeFile(join(temporary, `demo-${width}.png`), Buffer.from(data, 'base64'));
+      console.log(`PASS ${width}px: demo, disclaimer and privacy layout`);
+    }
+    await send('Emulation.setScriptExecutionDisabled', { value: true });
+    const noScriptLoaded = new Promise(resolveLoad => listeners.set('Page.loadEventFired', [resolveLoad]));
+    await send('Page.navigate', { url: origin });
+    await noScriptLoaded;
+    await send('Emulation.setScriptExecutionDisabled', { value: false });
+    assert.equal(await evaluate(`document.querySelector('.project-toolbar').hidden`), true);
+    await fill();
+    await evaluate(`document.querySelector('#quote-form button').click()`);
+    await evaluate(`document.querySelector('[name="email"]').focus()`);
+    await key('Enter');
+    await submit();
+    await evaluate(`document.getElementById('quote-form').submit()`);
+    assert.equal(requests.length, 0);
+    assert.equal(await evaluate('location.href'), `${origin}/`);
+    assert.equal(await evaluate(`document.getElementById('quote-form').method`), 'dialog');
+    await evaluate(`document.querySelector('a[href="#privacy"]').click()`);
+    assert.equal(await evaluate('location.hash'), '#privacy');
+    assert.equal(await evaluate('document.activeElement.id'), 'privacy');
+    console.log('PASS demo with/without JavaScript: clicks, Enter, requestSubmit and native submit send no requests; privacy links work');
+    await send('Page.navigate', { url: `${origin}/integration-test` });
+    await loaded();
 
     assert.deepEqual(await evaluate(`Array.from(document.querySelectorAll('#quote-form .form-fields input, #quote-form select, #quote-form textarea'), field => [field.name, !!field.labels.length])`), [['name', true], ['email', true], ['telefoon', true], ['onderwerp', true], ['message', true]]);
     assert.deepEqual(await evaluate(`(() => { const note = document.getElementById('form-note'); return [note.role, note.getAttribute('aria-live'), note.getAttribute('aria-atomic'), note.tabIndex]; })()`), ['status', 'polite', 'true', -1]);
