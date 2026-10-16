@@ -14,6 +14,29 @@ const endpoint = 'https://formspree.io/f/mljgabdv';
 const html = await readFile(join(root, 'index.html'), 'utf8');
 const handler = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].at(-1)[1];
 
+test('one JSON-LD business record uses only verified facts and supported Schema.org fields', () => {
+  const blocks = [...html.matchAll(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/g)];
+  assert.equal(blocks.length, 1);
+  const business = JSON.parse(blocks[0][1]);
+  assert.deepEqual(business, {
+    '@context': 'https://schema.org',
+    '@type': 'HomeAndConstructionBusiness',
+    name: 'V/D Linden Sloop',
+    address: {
+      '@type': 'PostalAddress',
+      streetAddress: 'Alcorplein 3',
+      postalCode: '3089 PA',
+      addressLocality: 'Rotterdam',
+      addressCountry: 'NL'
+    },
+    telephone: '+31 6 81105719',
+    email: 'info@vdlindensloop.nl'
+  });
+  for (const text of [business.name, business.address.streetAddress, `${business.address.postalCode} ${business.address.addressLocality}`, business.telephone, business.email]) {
+    assert.ok(html.slice(html.indexOf('<body>')).includes(text), `Business fact missing from visible HTML: ${text}`);
+  }
+});
+
 function setup(response, valid = true, submissionsEnabled = 'true') {
   const events = {};
   const requests = [];
@@ -334,6 +357,35 @@ test('contact form, accessibility and gallery browser regressions (mocked delive
     await noScriptLoaded;
     await send('Emulation.setScriptExecutionDisabled', { value: false });
     assert.equal(await evaluate(`document.querySelector('.project-toolbar').hidden`), true);
+    assert.deepEqual(await evaluate(`Array.from(document.querySelectorAll('a[href^="#"]')).filter(anchor => !document.getElementById(anchor.hash.slice(1))).map(anchor => anchor.hash)`), []);
+    for (const width of [320, 390, 768, 1024, 1440]) {
+      await send('Emulation.setDeviceMetricsOverride', { width, height: 900, deviceScaleFactor: 1, mobile: false });
+      assert.equal(await evaluate(`['home', 'over-antonio', 'projecten', 'contact', 'privacy'].every(id => document.getElementById(id).getBoundingClientRect().height > 0)`), true);
+      assert.equal(await evaluate(`document.querySelectorAll('.project-card img').length`), 8);
+      await evaluate(`document.querySelector('.main-nav a[href="#over-antonio"]').click()`);
+      assert.equal(await evaluate('location.hash'), '#over-antonio');
+      await evaluate(`new Promise(resolve => {
+        const images = Array.from(document.querySelectorAll('.project-card img'));
+        let index = 0;
+        const next = () => {
+          if (index === images.length) return resolve();
+          images[index++].scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' });
+          setTimeout(next, 50);
+        };
+        next();
+      })`);
+      await evaluate(`document.getElementById('contact').scrollIntoView({ behavior: 'instant' })`);
+      await evaluate(`Promise.race([Promise.all(Array.from(document.images, image => image.decode().catch(() => {}))), new Promise(resolve => setTimeout(resolve, 5000))])`);
+      assert.equal(await evaluate(`Array.from(document.images, image => image.complete && image.naturalWidth > 0).every(Boolean)`), true, `Missing image without page scripts at ${width}`);
+      assert.equal(await evaluate(`document.documentElement.scrollWidth <= innerWidth`), true, `No-script overflow at ${width}`);
+      assert.equal(await evaluate(`!!document.querySelector('a[href="tel:+31681105719"]') && !!document.querySelector('a[href="mailto:info@vdlindensloop.nl"]')`), true);
+      console.log(`PASS ${width}px without page scripts: essential content, anchors, eight photos, contact links and overflow`);
+    }
+    await evaluate(`document.getElementById('project-gallery').scrollLeft = 0; document.getElementById('project-gallery').focus()`);
+    await send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'ArrowRight', code: 'ArrowRight', windowsVirtualKeyCode: 39 });
+    await send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'ArrowRight', code: 'ArrowRight', windowsVirtualKeyCode: 39 });
+    await evaluate(`new Promise(resolve => setTimeout(resolve, 300))`);
+    assert.equal(await evaluate(`document.getElementById('project-gallery').scrollLeft > 0`), true);
     await fill();
     await evaluate(`document.querySelector('#quote-form button').click()`);
     await evaluate(`document.querySelector('[name="email"]').focus()`);
@@ -341,7 +393,7 @@ test('contact form, accessibility and gallery browser regressions (mocked delive
     await submit();
     await evaluate(`document.getElementById('quote-form').submit()`);
     assert.equal(requests.length, 0);
-    assert.equal(await evaluate('location.href'), `${origin}/`);
+    assert.equal(await evaluate('location.pathname'), '/');
     assert.equal(await evaluate(`document.getElementById('quote-form').method`), 'dialog');
     await evaluate(`document.querySelector('a[href="#privacy"]').click()`);
     assert.equal(await evaluate('location.hash'), '#privacy');
