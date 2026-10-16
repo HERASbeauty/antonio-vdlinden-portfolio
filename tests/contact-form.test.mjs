@@ -202,7 +202,7 @@ test('contact form, accessibility and gallery browser regressions (mocked delive
     let interceptionError;
     const fulfill = (requestId, status) => send('Fetch.fulfillRequest', {
       requestId, responseCode: status,
-      responseHeaders: [{ name: 'Content-Type', value: 'application/json' }],
+      responseHeaders: [{ name: 'Content-Type', value: 'application/json' }, { name: 'Access-Control-Allow-Origin', value: origin }],
       body: Buffer.from(JSON.stringify(status === 200 ? { ok: true } : { errors: [{ field: 'email', message: 'Rejected' }] })).toString('base64')
     });
     listeners.set('Fetch.requestPaused', [event => {
